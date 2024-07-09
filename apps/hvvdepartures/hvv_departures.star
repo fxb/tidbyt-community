@@ -8,6 +8,7 @@ Author: fxb (Felix Bruns)
 load("cache.star", "cache")
 load("encoding/base64.star", "base64")
 load("encoding/json.star", "json")
+load("hmac.star", "hmac")
 load("http.star", "http")
 load("math.star", "math")
 load("render.star", "render")
@@ -23,21 +24,43 @@ load("time.star", "time")
 # but can theoretically be re-used for Berlin & Brandenburg (VBB, BVG) or
 # even "Deutsche Bahn" long-distance trains.
 #
-# Please consider supporting the maintainer of these APIs:
-#   https://github.com/sponsors/derhuerst
-#
-HVV_REST_API_LOCATIONS_URL = "https://v5.hvv.transport.rest/locations"
-HVV_REST_API_DEPARTURES_URL = "https://v5.hvv.transport.rest/stops/%s/departures"
-
-# Cache API responses for a short time, as we want things to be as recent as possible.
-CACHE_TTL_SECONDS = 30
-
-# The RFC3339 date and time format string used by Go / Starlark.
-RFC3339_FORMAT = "2006-01-02T15:04:05Z07:00"
+GTI_API_URL = "https://gti.geofox.de/gti/public/{method}"
+GTI_API_VERSION = 54
+GTI_API_METHOD_INIT = "init"
+GTI_API_METHOD_CHECK_NAME = "checkName"
+GTI_API_METHOD_DEPARTURE_LIST = "departureList"
+GTI_API_DATE_FORMAT = "02.01.2006"
+GTI_API_TIME_FORMAT = "15:04"
 
 # The default station ID to use, if none is set by the user.
 # This currently defaults to "Hamburg Hbf" (main station).
-DEFAULT_STATION_ID = "90"
+GTI_API_DEFAULT_STATION_ID = "Master:9910950"
+
+# Cache API responses for a short time, as we want things to be as recent as possible.
+GTI_API_CACHE_TTL_SECONDS = 30
+
+# A mapping of applet configuration options to GTI API service types.
+OPTIONS_TO_GTI_API_SERVICE_TYPES = {
+    "include_subway": ["UBAHN"],
+    "include_suburban": ["SBAHN"],
+    "include_bus": [
+        "BUS",
+        "STADTBUS",
+        "METROBUS",
+        "NACHTBUS",
+        "SCHNELLBUS",
+        "XPRESSBUS"
+    ],
+    "include_akn": ["AKN"],
+    "include_regional_train": ["RBAHN"],
+    "include_long_distance_train": ["FERNBAHN"],
+    "include_ferry": ["FAEHRE"],
+}
+
+OPTION_SERVICE_ALL = "{}"
+
+# The RFC3339 date and time format string used by Go / Starlark.
+RFC3339_FORMAT = "2006-01-02T15:04:05Z07:00"
 
 # Background images for known lines, as well as the HVV logo.
 IMAGE_LOGO = base64.decode("iVBORw0KGgoAAAANSUhEUgAAACAAAAAKCAYAAADVTVykAAABhUlEQVR4AbzTA4ycQRTA8VfbthvUtm3bilXHNYLathnVto2zbWsx97/LYrIKDi/5LR8G+USUPMFslBFL5DQdUh07sU+KPJT8RxB2oy9KMbghfBBVHAtoglVIRDJa6wtAfSzEXmxBJ1TGRCxGbdGC720xD8PR2ZLT1yGnMqZjkTBwPd4jFfdRW1tAJE4iA8riFwbhLhQW5TQZXFJrfgAGbMVEKDxFRS2nD5IRKgyMxRG0FEtoCzBjHzpbnIHCTQxBDP6jo1aXiQA0y248sATvX5CFMfk5TYaU4/NlJGKFMLimOIS2AAO7q+hwvAqfc5oOrs37NihsRTlshMIOrWYB4nHNMnw2YnCD3mXFIRwXECNaUFDDMuAbn6vx3hxp+ItZCMZntHe478uIwly8RgpGirtw9xQYmgypri/AknsRRoRBYR5KOvQbjkyEwozHnEb5wlpAD3hDIdDgcKyWnEp4AYV0TBNPQUIV7MBOhwXkNTqGTSygnJY/D0cw2EPPgZba3OUj5wgA0xFcXLHDZ2kAAAAASUVORK5CYII=")
@@ -45,11 +68,11 @@ IMAGE_METRO_BUS = base64.decode("iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAYAAAA7KqwyAAA
 IMAGE_XPRESS_BUS = base64.decode("iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAYAAAA7KqwyAAAAaklEQVR4AZ3QsQ2AIBCFYRL3cAEWsLWlYQ1nYBEnYwobbAlG3yteLXeX/OX3igu69dwyGuj9aaAsJ7yjNoFVoxGO6DZgRRM5UB1Y1eDFigOXF9NyIKHHgWmSHnmgbsCdhlYDCyqGgUJD+wGOhfahrZQnuQAAAABJRU5ErkJggg==")
 IMAGE_NIGHT_BUS = base64.decode("iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAQAAACRI2S5AAAAXElEQVR42n3PoQ2AQAAEwU2+k7VUgcXQBjXQJ1VgwBLIIXDwT07OmgPE0dO8djoCIPZuH45xswfs3Ksc426HS5NjXPjlGFx/gxUHryZfDoiTR5UPp+dmca4GswVu/YOM52Hx5vcAAAAASUVORK5CYII=")
 IMAGE_S1 = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJCAYAAAACTR1pAAAAa0lEQVR4AWMAAfEpWuZSU7WeSk7Tei01Tfs/NgyVeyI5TcMYrklyqtZHkCQxGKRWcrK6CQPIJpAAifgJA5D4QKpGoGVvGEAMcjDZNpLvR1DwkhSq07Q+iU7SMgRHCSh4QaaAnIDPeSA1ME0Aow/ZmIBU42QAAAAASUVORK5CYII=")
-IMAGE_S11 = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJCAYAAAACTR1pAAAAcUlEQVR4AWMAAfEpWuaSU7VPS03T/o8Pg9RITtMwRtKktZ2BGNDAwCQ5TXuH5GR1EwaQKYQ1aLOhatY6yQByAgNpAKyH/hrBfgS5m2hdaQysYD+CghcUUhDNhDUBLdopOknLEMwHBS/IFELxCFID0wQAw2VH51lki9YAAAAASUVORK5CYII=")
-IMAGE_S2 = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJCAYAAAACTR1pAAAAWElEQVR4AWMAgS0iluZAfBqI/+PDUDXGyJq2M+AHMLVMQLwDiE1AnNNEaGBD03wSxPjPQBqA6KG/RmhIMZGgiRXmR2NoSDERqWknEBvCBExAphARjydhmgBamVICM40gzAAAAABJRU5ErkJggg==")
-IMAGE_S21 = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJCAYAAAACTR1pAAAAbUlEQVR42p1QQQqAQAj0CYF+JFpa99ct65PqVIfqA9Uc6hTRKgyIOo4OIQbWWDhNRXQ2Sccb0Cuso0nsHpKxbmj+AWaz9IGghEINoEzGujqICyHxwK3o/xH21rh6Ce25CS0hYC+24ISv8zBzk04OP+ukjEgl2AAAAABJRU5ErkJggg==")
-IMAGE_S3_S31 = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJCAYAAAACTR1pAAAAbElEQVR4AWMAgWCFbPMQhdynIYp5r4H4PzYMllPIexIgl2eM0KSY+xEiSRiD1AbL5pgwQG36TwoG2cwANOEDqRqDFXLfMIAY5GCybSTfj6DgJSVUgxXzPgXL5xqCowQUvCBTQE7A5zyQGpgmAHpv3XJOylpCAAAAAElFTkSuQmCC")
+IMAGE_S2 = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJCAYAAAACTR1pAAAAbUlEQVR42p1QQQqAQAj0CYF+JFpa99ct65PqVIfqA9Uc6hTRKgyIOo4OIQbWWDhNRXQ2Sccb0Cuso0nsHpKxbmj+AWaz9IGghEINoEzGujqICyHxwK3o/xH21rh6Ce25CS0hYC+24ISv8zBzk04OP+ukjEgl2AAAAABJRU5ErkJggg==")
+IMAGE_S3 = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJCAYAAAACTR1pAAAAbElEQVR4AWMAgWCFbPMQhdynIYp5r4H4PzYMllPIexIgl2eM0KSY+xEiSRiD1AbL5pgwQG36TwoG2cwANOEDqRqDFXLfMIAY5GCybSTfj6DgJSVUgxXzPgXL5xqCowQUvCBTQE7A5zyQGpgmAHpv3XJOylpCAAAAAElFTkSuQmCC")
+IMAGE_S5 = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJBAMAAADwYwBaAAAAGFBMVEUAk8EAk8EAk8EAk8EAk8EAk8EAk8EAk8EVErdJAAAACHRSTlMBgOf/fYXodmMUWLwAAAAnSURBVAjXY2BUNjY2NnJgCDYGAVOGZDBtxmAMARg0TB6mngWsvwAAzTQM/yA8BKUAAAAASUVORK5CYII=")
 IMAGE_AKN = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJCAYAAAACTR1pAAAAVElEQVR4AWMAgX8NkuZA/BSIPwDxfxz4NRA/AWJjZE0fIZKEMVStCQPUpv8k4icMMOeRiN8wgBjkYLJtpMiPxiSG6icgNoRFiQk0jt7gcx5IDUwTAGj6M5mAtFVfAAAAAElFTkSuQmCC")
+IMAGE_FERRY = base64.decode("iVBORw0KGgoAAAANSUhEUgAAAA4AAAAJBAMAAADwYwBaAAAAJ1BMVEUAk8EAk8EAk8EAk8EAk8EAk8EAk8EAk8EAk8EAAAAAk8EAk8EAk8EaPqQDAAAADXRSTlPo/8CYaHBASBgA8MiggFTfDQAAADNJREFUCNdjYBQEAQEGRTAtxGAIpoUZHMG0KEMimBZnaATTEgyzwPRKhtlgeifDZDB9EgDq8gjgrMqy9QAAAABJRU5ErkJggg==")
 
 # Configuration for backgrounds and colors for all known lines.
 LINE_CONFIG = {
@@ -61,11 +84,9 @@ LINE_CONFIG = {
 
     # Suburban trains (S-Bahn)
     "s1": {"image": IMAGE_S1, "color": "#ffffff"},
-    "s11": {"image": IMAGE_S11, "color": "#1a962b"},
-    "s2": {"image": IMAGE_S2, "color": "#b41439"},
-    "s21": {"image": IMAGE_S21, "color": "#ffffff"},
-    "s3": {"image": IMAGE_S3_S31, "color": "#ffffff"},
-    "s31": {"image": IMAGE_S3_S31, "color": "#ffffff"},
+    "s2": {"image": IMAGE_S2, "color": "#ffffff"},
+    "s3": {"image": IMAGE_S3, "color": "#ffffff"},
+    "s5": {"image": IMAGE_S5, "color": "#ffffff"},
 
     # AKN commuter trains
     "a1": {"image": IMAGE_AKN, "color": "#ffffff"},
@@ -77,9 +98,15 @@ LINE_CONFIG = {
     "xpress_bus": {"image": IMAGE_XPRESS_BUS, "color": "#ffffff"},
     "night_bus": {"image": IMAGE_NIGHT_BUS, "color": "#ffffff"},
 
-    # Regional trains (Regional-Bahn, Regional-Express)
+    # Regional trains (Regional Bahn, Regional Express)
     "rb": {"background-color": "#2f2f2f", "color": "#ffffff"},
     "re": {"background-color": "#2f2f2f", "color": "#ffffff"},
+
+    # Long distance trains (Inter City Express)
+    "ice": {"color": "#ffffff"},
+
+    # Ferries
+    "ferry": {"image": IMAGE_FERRY, "color": "#ffffff"},
 }
 
 # These are used as fallbacks in case there is no specific config above.
@@ -87,8 +114,10 @@ LINE_CONFIG = {
 # any background image or color.
 DEFAULT_SUBWAY_CONFIG = {"color": "#ffffff"}
 DEFAULT_SUBURBAN_CONFIG = {"color": "#ffffff"}
-DEFAULT_BUS_CONFIG = {"color": "#ffffff"}
-DEFAULT_REGIONAL_TRAIN_CONFIG = {"color": "#ffffff"}
+DEFAULT_BUS_CONFIG = LINE_CONFIG["metro_bus"]
+DEFAULT_REGIONAL_TRAIN_CONFIG = LINE_CONFIG["rb"]
+DEFAULT_LONG_DISTANCE_TRAIN_CONFIG = LINE_CONFIG["ice"]
+DEFAULT_FERRY_CONFIG = LINE_CONFIG["ferry"]
 
 # Other colors used throughout the applet.
 COLOR_BACKGROUND = "#000000"
@@ -99,82 +128,116 @@ COLOR_DEPARTURE_TIME = "#ff9900"
 COLOR_DEPARTURE_TIME_DELAYED = "#ff0000"
 COLOR_DEPARTURE_TIME_ON_TIME = "#00ff00"
 
-def render_subway_icon(id, name):
+def render_subway_icon(type, name):
     """Render a rectangular subway (U-Bahn) icon.
 
     Args:
-        id: The id of the subway line.
+        type: The type of the subway line.
         name: The name of the subway line.
 
     Returns:
         A definition of what to render.
     """
-    data = LINE_CONFIG.get(id, DEFAULT_SUBWAY_CONFIG)
-    background_color = data["background-color"]
-    color = data["color"]
+    data = LINE_CONFIG.get(name.lower(), DEFAULT_SUBWAY_CONFIG)
+    background_color = data.get("background-color", "#000000")
+    color = data.get("color", "#ffffff")
     return render.Box(width = 18, height = 15, padding = 2, child = render.Stack(children = [
         render.Box(width = 14, height = 9, color = background_color) if background_color != None else None,
         render.Box(width = 16, height = 9, child = render.Text(name, offset = -1, font = "tom-thumb", color = color)),
     ]))
 
-def render_suburban_icon(id, name):
+def render_suburban_icon(type, name):
     """Render a pill shaped suburban train (S-Bahn) icon.
 
     Args:
-        id: The id of the suburban train line.
+        type: The type of the suburban train line.
         name: The name of the suburban train line.
 
     Returns:
         A definition of what to render.
     """
-    data = LINE_CONFIG.get(id, DEFAULT_SUBURBAN_CONFIG)
-    image = data["image"]
-    color = data["color"]
+    data = LINE_CONFIG.get(name.lower(), DEFAULT_SUBURBAN_CONFIG)
+    image = data.get("image", None)
+    color = data.get("color", "#ffffff")
     return render.Box(width = 18, height = 15, padding = 2, child = render.Stack(children = [
         render.Image(width = 14, height = 9, src = image) if image != None else None,
         render.Box(width = 16, height = 9, child = render.Text(name, offset = -1, font = "tom-thumb", color = color)),
     ]))
 
-def render_bus_icon(id, name):
+def render_bus_icon(type, name):
     """Render a diamond like bus (MetroBus, XpressBus or NachtBus) icon.
 
     Args:
-        id: The id of the bus line.
+        type: The type of the bus line.
         name: The name of the bus line.
 
     Returns:
         A definition of what to render.
     """
-    is_xpress_bus = id[0] == "x"
-    is_night_bus = len(id) == 3 and id[0] == "6"
+    is_xpress_bus = type == "XpressBus"
+    is_night_bus = type == "Nachtbus"
     data = LINE_CONFIG.get("xpress_bus" if is_xpress_bus else "night_bus" if is_night_bus else "metro_bus", DEFAULT_BUS_CONFIG)
-    image = data["image"]
-    color = data["color"]
+    image = data.get("image", None)
+    color = data.get("color", "#ffffff")
     expand = len(name) > 3
     return render.Box(width = 18, height = 15, padding = 0 if expand else 1, child = render.Stack(children = [
         render.Image(width = 18 if expand else 16, height = 9, src = image) if image != None else None,
         render.Box(width = 20 if expand else 18, height = 9, child = render.Text(name, offset = -1, font = "tom-thumb", color = color)),
     ]))
 
-def render_regional_train_icon(id, name):
+def render_regional_train_icon(type, name):
     """Render a rectangular regional (express) train (Regional-Bahn, Regional-Express) icon.
 
     Args:
-        id: The id of the regional train line.
+        type: The type of the regional train line.
         name: The name of the regional train line.
 
     Returns:
         A definition of what to render.
     """
-    data = LINE_CONFIG.get(id[0:2], DEFAULT_REGIONAL_TRAIN_CONFIG)
-    background_color = data["background-color"]
-    color = data["color"]
+    data = LINE_CONFIG.get(type, DEFAULT_REGIONAL_TRAIN_CONFIG)
+    background_color = data.get("background-color", "#000000")
+    color = data.get("color", "#ffffff")
     return render.Box(width = 18, height = 15, padding = 1, child = render.Stack(children = [
         render.Box(width = 15, height = 13, color = background_color),
         render.Column(children = [
             render.Box(height = 6, child = render.Text(name[0:2], offset = -1, font = "tom-thumb", color = color)),
             render.Box(height = 6, child = render.Text(name[2:], offset = -1, font = "tom-thumb", color = color)),
         ]),
+    ]))
+
+def render_long_distance_train_icon(type, name):
+    """Render a rectangular regional (express) train (Regional-Bahn, Regional-Express) icon.
+
+    Args:
+        type: The type of the regional train line.
+        name: The name of the regional train line.
+
+    Returns:
+        A definition of what to render.
+    """
+    data = LINE_CONFIG.get(type, DEFAULT_LONG_DISTANCE_TRAIN_CONFIG)
+    color = data.get("color", "#ffffff")
+    return render.Box(width = 18, height = 15, padding = 1, child = render.Column(children = [
+        render.Box(height = 6, child = render.Text(name, offset = -1, font = "tom-thumb", color = color)),
+    ]))
+
+def render_ferry_icon(type, name):
+    """Render a trapeze shaped ferry (Fähre) icon.
+
+    Args:
+        type: The type of the ferry line.
+        name: The name of the ferry line.
+
+    Returns:
+        A definition of what to render.
+    """
+    data = LINE_CONFIG.get(name.lower(), DEFAULT_FERRY_CONFIG)
+    image = data.get("image", None)
+    color = data.get("color", "#ffffff")
+    return render.Box(width = 18, height = 15, padding = 2, child = render.Stack(children = [
+        render.Image(width = 14, height = 9, src = image) if image != None else None,
+        render.Box(width = 16, height = 9, child = render.Text(name, offset = -1, font = "tom-thumb", color = color)),
     ]))
 
 def render_line_icon(line):
@@ -186,62 +249,70 @@ def render_line_icon(line):
     Returns:
         A definition of what to render.
     """
-    id = line["id"]
+    type = line["type"]["shortInfo"]
     name = line["name"]
-    product = line["product"]
 
-    #print("Product:", product, "Mode:", line["mode"])
-
-    if product == "subway":
-        return render_subway_icon(id, name)
-    elif product == "suburban" or \
-         product == "akn":
-        return render_suburban_icon(id, name)
-    elif product == "regional-train" or \
-         product == "regional-express-train":
-        return render_regional_train_icon(id, name)
-    elif product == "bus" or \
-         product == "express-bus":
-        return render_bus_icon(id, name)
-    elif product == "anruf-sammel-taxi" or \
-         product == "long-distance-train" or \
-         product == "long-distance-bus":
-        # Currently unsupported (taxi & long distance trains).
-        return None
+    if type == "U":
+        return render_subway_icon(type, name)
+    elif type == "S" or \
+         type == "A":
+        return render_suburban_icon(type, name)
+    elif type == "Bus" or \
+         type == "XpressBus" or \
+         type == "Nachtbus":
+        return render_bus_icon(type, name)
+    elif type == "RB" or \
+         type == "RE":
+        return render_regional_train_icon(type, name)
+    elif type == "ICE":
+        return render_long_distance_train_icon(type, name)
+    elif type == "Schiff":
+        return render_ferry_icon(type, name)
 
     # Fallback to just rendering nothing.
-    return None
+    return render.Box()
 
-def render_relative_departure_time(time_actual):
+def split_duration(duration):
+    hours = math.floor(duration.hours)
+    minutes = math.floor(duration.minutes) - hours * 60
+    return (hours, minutes)
+
+def render_relative_departure_time(time_base, time_actual):
     """Render a relative departure time.
 
     Args:
+        time_base: The time to use as a reference.
         time_actual: The actual departure time.
 
     Returns:
         A definition of what to render.
     """
-    diff_minutes = math.floor((time_actual - time.now()).minutes)
+    (diff_hours, diff_minutes) = split_duration(time_actual - time_base)
 
     return render.Text(
-        content = "now" if diff_minutes <= 0 else ("%s min" % diff_minutes),
+        content = "now"
+            if diff_hours <= 0 and diff_minutes <= 0
+            else "{}h {}m".format(diff_hours, diff_minutes)
+            if diff_hours > 0
+            else "{} min".format(diff_minutes),
         height = 7,
         font = "tb-8",
         color = COLOR_DEPARTURE_TIME,
     )
 
-def render_absolute_departure_time(format, time_planned, time_actual):
+def render_absolute_departure_time(format, time_base, time_planned, time_actual):
     """Render an absolute departure time, including a delay indicator.
 
     Args:
         format: The time layout string to use.
+        time_base: The time to use as a reference.
         time_planned: The planned departure time.
         time_actual: The actual departure time.
 
     Returns:
         A definition of what to render.
     """
-    delay_minutes = math.floor((time_actual - time_planned).minutes)
+    (delay_hours, delay_minutes) = split_duration(time_actual - time_planned)
 
     return render.Row(children = [
         render.Text(
@@ -251,18 +322,25 @@ def render_absolute_departure_time(format, time_planned, time_actual):
             color = COLOR_DEPARTURE_TIME,
         ),
         render.Text(
-            content = "+%d" % delay_minutes,
+            content = "+0"
+                if delay_hours <= 0 and delay_minutes <= 0
+                else "+{}h{}m".format(delay_hours, delay_minutes)
+                if delay_hours > 0
+                else "+{}".format(delay_minutes),
             height = 7,
             font = "tom-thumb",
-            color = COLOR_DEPARTURE_TIME_DELAYED if delay_minutes > 0 else COLOR_DEPARTURE_TIME_ON_TIME,
+            color = COLOR_DEPARTURE_TIME_DELAYED
+                if delay_hours > 0 or delay_minutes > 0
+                else COLOR_DEPARTURE_TIME_ON_TIME,
         ),
     ])
 
-def render_departure_time(time_format, time_planned, time_actual):
+def render_departure_time(time_format, time_base, time_planned, time_actual):
     """Render a relative or an absolute departure time.
 
     Args:
         time_format: The time layout string to use or "relative".
+        time_base: The time to use as a reference.
         time_planned: The planned departure time.
         time_actual: The actual departure time.
 
@@ -270,22 +348,24 @@ def render_departure_time(time_format, time_planned, time_actual):
         A definition of what to render.
     """
     if time_format == "relative":
-        return render_relative_departure_time(time_actual)
+        return render_relative_departure_time(time_base, time_actual)
     else:
-        return render_absolute_departure_time(time_format, time_planned, time_actual)
+        return render_absolute_departure_time(time_format, time_base, time_planned, time_actual)
 
-def render_departure(departure, time_format):
+def render_departure(departure, time_base, time_offset, time_format):
     """Render which line, including icon, departs at what time.
 
     Args:
         departure: A "departure" dictionary, retrieved from the API.
+        time_base: The time to use as a reference.
+        time_offset: A time offset to add.
         time_format: The time layout string to use or "relative".
 
     Returns:
         A definition of what to render.
     """
-    time_planned = time.parse_time(departure["plannedWhen"])
-    time_actual = time.parse_time(departure["when"])
+    time_planned = time_base + time_offset + int(departure.get("timeOffset", 0)) * time.minute
+    time_actual = time_planned + int(departure.get("delay", 0)) * time.second
 
     return render.Row(
         expanded = True,
@@ -302,136 +382,19 @@ def render_departure(departure, time_format):
                     render.Marquee(
                         width = 48,
                         child = render.Text(
-                            content = departure["direction"],
+                            content = departure["line"]["direction"],
                             height = 8,
                             font = "tb-8",
                         ),
                     ),
                     render.Marquee(
-                        render_departure_time(time_format, time_planned, time_actual),
+                        render_departure_time(time_format, time_base, time_planned, time_actual),
                         width = 48,
                     ),
                 ],
             ),
         ],
     )
-
-def fetch_departures(station_id, extra_params = {}, duration_minutes = 1440, max_results = 2):
-    """Fetch departures given a station identifier.
-
-    Args:
-        station_id: A station identifier to fetch departures for.
-        extra_params: Additional request parameters.
-        duration_minutes: Get departures up to X minutes into the future.
-        max_results: Return at most this number of results.
-
-    Returns:
-        An API response containing the departures.
-    """
-    url = HVV_REST_API_DEPARTURES_URL % station_id
-
-    # Set base request parameters.
-    params = {
-        "duration": str(duration_minutes),
-        "results": str(max_results),
-        "includeRelatedStations": "true",
-        "linesOfStops": "false",
-        "remarks": "false",
-        "stopovers": "false",
-    }
-
-    # Add additional request parameters.
-    params.update(extra_params)
-
-    # Construct a unique cache key.
-    cache_key = base64.encode(url + json.encode(params))
-    cache_data = cache.get(cache_key)
-
-    if cache_data != None:
-        return json.decode(cache_data)
-    else:
-        response = http.get(url = url, params = params)
-
-        if response.status_code != 200:
-            print("API request failed with status %d" % response.status_code)
-            return None
-
-        data = response.json()
-
-        # TODO: Determine if this cache call can be converted to the new HTTP cache.
-        cache.set(cache_key, json.encode(data), ttl_seconds = CACHE_TTL_SECONDS)
-
-        return data
-
-def get_config_option_value(config, key, default = None):
-    """Get the value of a 'schema.Option' from the applet configuration.
-
-    Args:
-        config: The applet configuration.
-        key: The configuration key.
-        default: The default value to fallback to.
-
-    Returns:
-        The value of the 'schema.Option' or the fallback value.
-    """
-    blob = config.str(key)
-    data = json.decode(blob) if blob != None else None
-    return data["value"] if data != None else default
-
-def bool_str(value):
-    return "true" if value == True else "false"
-
-def parse_config(config):
-    """Parse the applet configuration into some convenient structures.
-
-    Args:
-        config: The applet configuration.
-
-    Returns:
-        A tuple of transformed applet configuration values.
-    """
-    station_id = get_config_option_value(config, "station_id", DEFAULT_STATION_ID)
-    direction_id = get_config_option_value(config, "direction_id")
-    time_format = config.str("time_format", "relative")
-    time_offset = time.parse_duration(config.str("time_offset", "0m"))
-
-    # Which means of transport are selected?
-    include_subway = config.bool("include_subway", True)
-    include_suburban = config.bool("include_suburban", True)
-    include_bus = config.bool("include_bus", True)
-    include_express_bus = config.bool("include_express_bus", True)
-    include_rb = config.bool("include_rb", True)
-    include_re = config.bool("include_re", True)
-    include_akn = config.bool("include_akn", True)
-    include_ferry = config.bool("include_ferry", True)
-    is_anything_selected = include_subway or include_suburban or \
-                           include_bus or include_express_bus or \
-                           include_rb or include_re or \
-                           include_akn or include_ferry
-
-    # API request parameters derived from the applet configuration.
-    params = {
-        "subway": bool_str(include_subway),
-        "suburban": bool_str(include_suburban),
-        "bus": bool_str(include_bus),
-        "express-bus": bool_str(include_express_bus),
-        "akn": bool_str(include_akn),
-        "regional-train": bool_str(include_rb),
-        "regional-express-train": bool_str(include_re),
-        "ferry": bool_str(include_ferry),
-        "anruf-sammel-taxi": "false",
-        "long-distance-train": "false",
-        "long-distance-bus": "false",
-    }
-
-    # If a direction was set, add it to the API request parameters.
-    if direction_id != None:
-        params["direction"] = direction_id
-
-    if time_offset != 0:
-        params["when"] = (time.now() + time_offset).format(RFC3339_FORMAT)
-
-    return (station_id, time_format, is_anything_selected, params)
 
 def render_message(message, color):
     """Render a message in a given color, below the HVV logo.
@@ -459,6 +422,188 @@ def render_message(message, color):
         ),
     )
 
+def gti_request(method, data, ttl_seconds = GTI_API_CACHE_TTL_SECONDS):
+    """Request the GTI (Geofox Thin Interface) API.
+
+    Args:
+        path: The method to request.
+        data: The JSON request payload.
+
+    Returns:
+        A JSON response payload or `None`.
+    """
+    username = "**********"
+    password = "**********"
+
+    # Add method to API URL.
+    url = GTI_API_URL.format(method = method)
+
+    # Add API version to request payload.
+    data.update({ "version": GTI_API_VERSION })
+
+    # Serialize JSON request payload.
+    body = json.encode(data)
+
+    # Compute SHA1-HMAC signature of request payload and base64 encode it.
+    signature = hmac.sha1(password, body, encoding = "base64")
+
+    # Create dictionary of request headers.
+    headers = {
+        "geofox-auth-user": username,
+        "geofox-auth-signature": signature,
+        "content-type": "application/json",
+    }
+
+    # Send API request and cache it for a short time.
+    response = http.post(
+        url = url,
+        headers = headers,
+        body = body,
+        ttl_seconds = ttl_seconds
+    )
+
+    if response.status_code != 200:
+        print("API request failed with status %d" % response.status_code)
+        return None
+
+    return response.json()
+
+def fetch_stations(query, max_results = 5):
+    """Fetch stations matching a (fuzzy) query.
+
+    Args:
+        query: The (fuzzy) query string.
+        max_results: Return at most this number of results.
+
+    Returns:
+        A list containing the stations.
+    """
+    response = gti_request(GTI_API_METHOD_CHECK_NAME, {
+        "theName": {
+            "name": query,
+            "type": "STATION",
+        },
+        "maxList": max_results,
+        "allowTypeSwitch": False,
+    })
+
+    return response.get("results", [])
+
+def fetch_station_filters(station_id):
+    """Fetch available filters (services) for the given station.
+
+    Args:
+        station_id: The station to fetch filters for.
+
+    Returns:
+        A tuple containing alist of filters (services) and a list of service types available at this station.
+    """
+    response = gti_request(GTI_API_METHOD_DEPARTURE_LIST, {
+        "station": {
+            "id": station_id,
+            "type": "STATION",
+        },
+        "time": {},
+        "maxList": 0,
+        "returnFilters": True,
+        "allStationsInChangingNode": True,
+        "serviceTypes": []
+    }, ttl_seconds = 300)
+
+    filter = response.get("filter", [])
+    service_types = response.get("serviceTypes", [])
+
+    return (filter, service_types)
+
+def fetch_departures(station_id, service_filter, service_types, time_when, time_offset, time_span, max_results = 2):
+    """Fetch departures given a station identifier.
+
+    Args:
+        station_id: A station identifier to fetch departures for.
+        service_filter: A service filter to filter departures for.
+        service_types: A list of services types to filter departures for.
+        time_when: A time to fetch departures for.
+        time_offset: A time offset to add.
+        time_span: A time span to search departures in.
+        max_results: Return at most this number of results.
+
+    Returns:
+        A list containing the departures.
+    """
+    time_then = time_when + time_offset
+
+    response = gti_request(GTI_API_METHOD_DEPARTURE_LIST, {
+        "station": {
+            "id": station_id,
+            "type": "STATION",
+        },
+        "time": {
+            "date": time_then.format(GTI_API_DATE_FORMAT),
+            "time": time_then.format(GTI_API_TIME_FORMAT),
+        },
+        "filter": [service_filter] if service_filter else [],
+        "maxTimeOffset": int(time_span.minutes),
+        "maxList": max_results,
+        "allStationsInChangingNode": True,
+        "serviceTypes": service_types,
+        "useRealtime": False
+    })
+
+    print(json.indent(json.encode(response.get("departures", []))))
+
+    return response.get("departures", [])
+
+def get_config_json(config, key, default = {}):
+    """Get a JSON config option and decode it.
+
+    Args:
+        config: The applet configuration.
+        key: The configuration key.
+        default: The default value to fallback to.
+
+    Returns:
+        A decoded JSON object or the default value.
+    """
+    blob = config.str(key)
+    return json.decode(blob) if blob != None else default
+
+def get_config_json_value(config, key, json_key, default = None):
+    """Get a JSON config option, decode it and retrieve a value using a key.
+
+    Args:
+        config: The applet configuration.
+        key: The configuration key.
+        json_key: The JSON key.
+        default: The default value to fallback to.
+
+    Returns:
+        The value or the default value.
+    """
+    data = get_config_json(config, key)
+    return data[json_key] if data != None and json_key in data else default
+
+def parse_config(config):
+    """Parse the applet configuration into some convenient structures.
+
+    Args:
+        config: The applet configuration.
+
+    Returns:
+        A tuple of transformed applet configuration values.
+    """
+    station_id = get_config_json_value(config, "station_id", "value", GTI_API_DEFAULT_STATION_ID)
+    service_filter = get_config_json(config, "service_filter")
+    time_format = config.str("time_format", "relative")
+    time_offset = time.parse_duration(config.str("time_offset", "0m"))
+    time_span = time.parse_duration(config.str("time_span", "2h"))
+    service_types = flatten([
+        OPTIONS_TO_GTI_API_SERVICE_TYPES[option]
+        for option in OPTIONS_TO_GTI_API_SERVICE_TYPES
+        if config.bool(option, True)
+    ])
+
+    return (station_id, service_filter, time_format, time_offset, time_span, service_types)
+
 def main(config):
     """The applet entry point.
 
@@ -468,14 +613,20 @@ def main(config):
     Returns:
         A definition of what to render.
     """
-    (station_id, time_format, is_anything_selected, params) = parse_config(config)
+    (station_id, service_filter, time_format, time_offset, time_span, service_types) = parse_config(config)
 
-    # None of the products are selected...
-    if is_anything_selected == False:
-        return render_message("Choose at least one vessel", COLOR_MESSAGE_INFO)
+    # None of the service types are selected...
+    if len(service_types) == 0:
+        return render_message("Choose at least one service type", COLOR_MESSAGE_INFO)
+
+    # Get current time and add configured offset.
+    time_now = time.now()
+
+    # Get time in correct timezone, which for Hamburg is "Europe/Berlin".
+    time_in_location = time_now.in_location("Europe/Berlin")
 
     # Fetch departures and show an error message, if it fails.
-    departures = fetch_departures(station_id, params)
+    departures = fetch_departures(station_id, service_filter, service_types, time_in_location, time_offset, time_span)
     if departures == None:
         return render_message("Error fetching departures!", COLOR_MESSAGE_ERROR)
 
@@ -493,20 +644,19 @@ def main(config):
             child = render.Column(
                 expanded = True,
                 children = [
-                    render_departure(departures[0], time_format) if len(departures) > 0 else None,
+                    render_departure(departures[0], time_in_location, time_offset, time_format) if len(departures) > 0 else None,
                     render.Box(width = 64, height = 1, color = COLOR_SEPARATOR),
-                    render_departure(departures[1], time_format) if len(departures) > 1 else None,
+                    render_departure(departures[1], time_in_location, time_offset, time_format) if len(departures) > 1 else None,
                 ],
             ),
         ),
     )
 
-def find_stations(query, max_results = 2):
+def find_stations(query):
     """Search the API for a list of stations matching a (fuzzy) query.
 
     Args:
         query: The (fuzzy) query string.
-        max_results: Return at most this number of results.
 
     Returns:
         A list of 'schema.Option', each corresponding to a station.
@@ -515,23 +665,114 @@ def find_stations(query, max_results = 2):
     if len(query) == 0:
         return []
 
-    response = http.get(url = HVV_REST_API_LOCATIONS_URL, params = {
-        "query": query,
-        "fuzzy": "true",
-        "results": str(max_results),
-        "stops": "true",
-        "addresses": "false",
-        "poi": "false",
-        "linesOfStops": "false",
-    })
+    stations = fetch_stations(query, 5)
 
-    if response.status_code != 200:
-        print("API request failed with status %d" % response.status_code)
-        return []
+    return [schema.Option(display = station["combinedName"], value = station["id"]) for station in stations]
 
-    data = response.json()
+def flatten(l):
+    return [x for y in l for x in y]
 
-    return [schema.Option(display = station["name"], value = station["id"]) for station in data]
+def intersects(a, b):
+    return any([x in a for x in b])
+
+def get_station_fields(station_id):
+    # A `Typeahead` value is actually a JSON blob...
+    station_id = json.decode(station_id).get("value")
+
+    # Fetch filters available for the given station.
+    (filters, service_types) = fetch_station_filters(station_id)
+
+    # List of fields to return.
+    fields = []
+
+    # Add a direction dropdown with available options.
+    filter_options = [
+        schema.Option(
+            display = "All",
+            value = OPTION_SERVICE_ALL,
+        )
+    ]
+
+    filter_options.extend([
+        schema.Option(
+            display = "{} - {}".format(filter["serviceName"], filter["label"]),
+            value = json.encode(filter),
+        ) for filter in filters
+    ])
+
+    fields.append(
+        schema.Dropdown(
+            id = "service_filter",
+            name = "Service",
+            desc = "Pick a specific service",
+            icon = "locationArrow",
+            default = filter_options[0].value,
+            options = filter_options,
+        )
+    )
+
+    # Add toggles based on available service types.
+    service_type_options = [
+        toggle for toggle in
+        [
+            schema.Toggle(
+                id = "include_subway",
+                name = "U-Bahn",
+                desc = "Include subways",
+                icon = "trainSubway",
+                default = True,
+            ),
+            schema.Toggle(
+                id = "include_suburban",
+                name = "S-Bahn",
+                desc = "Include suburban trains",
+                icon = "train",
+                default = True,
+            ),
+            schema.Toggle(
+                id = "include_bus",
+                name = "Bus",
+                desc = "Include buses",
+                icon = "bus",
+                default = True,
+            ),
+            schema.Toggle(
+                id = "include_akn",
+                name = "AKN",
+                desc = "Include AKN commuter trains",
+                icon = "train",
+                default = True,
+            ),
+            schema.Toggle(
+                id = "include_regional_train",
+                name = "Regional",
+                desc = "Include regional trains",
+                icon = "train",
+                default = True,
+            ),
+            schema.Toggle(
+                id = "include_long_distance_train",
+                name = "Long-distance",
+                desc = "Include long-distance trains",
+                icon = "train",
+                default = True,
+            ),
+            schema.Toggle(
+                id = "include_ferry",
+                name = "Ferry",
+                desc = "Include ferrys",
+                icon = "ship",
+                default = True,
+            ),
+        ]
+        if intersects(OPTIONS_TO_GTI_API_SERVICE_TYPES[toggle.id], service_types)
+    ]
+
+    # Only add service type options if needed.
+    if len(service_type_options) > 1:
+        fields.extend(service_type_options)
+
+    return fields
 
 def get_schema():
     time_format_options = [
@@ -568,9 +809,48 @@ def get_schema():
         ),
     ]
 
+    time_span_options = [
+        schema.Option(
+            display = "30 minutes",
+            value = "30m",
+        ),
+        schema.Option(
+            display = "1 hour",
+            value = "1h",
+        ),
+        schema.Option(
+            display = "2 hours",
+            value = "2h",
+        ),
+        schema.Option(
+            display = "6 hours",
+            value = "6h",
+        ),
+        schema.Option(
+            display = "12 hours",
+            value = "12h",
+        ),
+        schema.Option(
+            display = "24 hours",
+            value = "24h",
+        ),
+    ]
+
     return schema.Schema(
         version = "1",
         fields = [
+            schema.Text(
+                id = "auth_username",
+                name = "Username",
+                desc = "Geofox-API username.",
+                icon = "user",
+            ),
+            schema.Text(
+                id = "auth_password",
+                name = "Password",
+                desc = "Geofox-API password.",
+                icon = "key",
+            ),
             schema.Typeahead(
                 id = "station_id",
                 name = "Station",
@@ -578,12 +858,10 @@ def get_schema():
                 icon = "mapPin",
                 handler = find_stations,
             ),
-            schema.Typeahead(
-                id = "direction_id",
-                name = "Direction",
-                desc = "Pick a direction (optional)",
-                icon = "locationArrow",
-                handler = find_stations,
+            schema.Generated(
+                id = "generated",
+                source = "station_id",
+                handler = get_station_fields,
             ),
             schema.Dropdown(
                 id = "time_format",
@@ -601,61 +879,13 @@ def get_schema():
                 default = time_offset_options[0].value,
                 options = time_offset_options,
             ),
-            schema.Toggle(
-                id = "include_subway",
-                name = "U-Bahn",
-                desc = "Include subways",
-                icon = "trainSubway",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "include_suburban",
-                name = "S-Bahn",
-                desc = "Include suburban trains",
-                icon = "train",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "include_bus",
-                name = "MetroBus",
-                desc = "Include buses",
-                icon = "bus",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "include_express_bus",
-                name = "XpressBus",
-                desc = "Include express buses",
-                icon = "bus",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "include_akn",
-                name = "AKN",
-                desc = "Include AKN commuter trains",
-                icon = "train",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "include_rb",
-                name = "RB",
-                desc = "Include regional trains",
-                icon = "train",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "include_re",
-                name = "RE",
-                desc = "Include regional express trains",
-                icon = "train",
-                default = True,
-            ),
-            schema.Toggle(
-                id = "include_ferry",
-                name = "Ferry",
-                desc = "Include ferrys",
-                icon = "ship",
-                default = True,
+            schema.Dropdown(
+                id = "time_span",
+                name = "Time span",
+                desc = "Pick a time span",
+                icon = "history",
+                default = time_span_options[2].value,
+                options = time_span_options,
             ),
         ],
     )
